@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>채팅방</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .chat-box {
+            height: 500px;
+            min-width: 350px;
+            overflow-y: scroll;
+            border: 1px solid #dee2e6;
+            border-radius: 0.5rem;
+            background-color: #f8f9fa;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-message {
+            display: flex;
+            flex-direction: column;
+            max-width: 75%;
+            margin-bottom: 1rem;
+            word-break: break-word;
+        }
+
+        .chat-message.mine {
+            align-self: flex-end;
+            text-align: right;
+        }
+
+        .chat-message.mine .bubble {
+            background-color: #007bff;
+            color: white;
+            border-radius: 1rem 1rem 0 1rem;
+            padding: 0.5rem 1rem;
+            display: inline-block;
+        }
+
+        .chat-message.other {
+            align-self: flex-start;
+            text-align: left;
+        }
+
+        .chat-message.other .bubble {
+            background-color: #e4e6eb;
+            color: #000;
+            border-radius: 1rem 1rem 1rem 0;
+            padding: 0.5rem 1rem;
+            display: inline-block;
+        }
+
+        .sender {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .timestamp {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 0.25rem;
+        }
+
+        .chat-message .sender {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .chat-message .timestamp {
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        .chat-input-box {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .bubble img {
+            max-width: 100%; display: block;
+        }
+    </style>
+</head>
+
+<body class="container py-4">
+
+<!-- 상단 영역: 채팅방 제목 + 참여자 우측 정렬 -->
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h3 class="fw-bold mb-0">채팅방</h3>
+
+    <div class="d-flex align-items-center gap-1 flex-wrap">
+        <span class="fw-semibold me-1">참여자</span>
+        <div class="d-flex gap-1 flex-wrap">
+            <span class="badge bg-light border text-dark"
+                  th:each="member : ${roomMembers}"
+                  th:text="${member.nickname}">닉네임</span>
+        </div>
+    </div>
+</div>
+
+<!-- 두 번째 줄: 초대/나가기 -->
+<div class="d-flex justify-content-end align-items-center gap-2 mb-3 flex-wrap">
+    <form th:action="@{/chat/room/{roomId}/invite(roomId=${roomId})}" method="post"
+          class="d-flex gap-2 align-items-center">
+        <input type="hidden" name="roomId" th:value="${roomId}"/>
+        <input type="text" name="nickname" class="form-control form-control-sm" placeholder="닉네임 입력"
+               style="width: 150px;" required/>
+        <button type="submit" class="btn btn-success btn-sm">+ 초대</button>
+    </form>
+    <form th:action="@{/chat/room/{roomId}/leave(roomId=${roomId})}" method="post"
+          onsubmit="return confirmLeaveRoom()">
+        <button type="submit" class="btn btn-outline-danger btn-sm">나가기</button>
+    </form>
+</div>
+
+
+<div class="chat-box" id="chatBox">
+    <div th:each="msg : ${messages}"
+         th:attr="id='msg-' + ${msg.id}"
+         th:class="'chat-message ' + (${msg.senderId} == ${myId} ? 'mine' : 'other')">
+        <div class="sender" th:text="${msg.senderNickname}">닉네임</div>
+
+        <div class="bubble">
+            <img th:if="${msg.imageUrl != null}" th:src="${msg.imageUrl}" alt="첨부 이미지" style="max-width: 200px; border-radius: 8px;"/>
+            <span th:if="${msg.imageUrl == null}" th:text="${msg.content}">메시지 내용</span>
+        </div>
+
+        <div class="timestamp">
+            <span th:text="${msg.createdAt}">15:00</span>
+            <span class="unread-count ms-1 text-primary small"
+                  th:text="${msg.unreadCount > 0 ? msg.unreadCount : ''}">1</span>
+        </div>
+    </div>
+</div>
+
+<div class="chat-input-box align-items-start gap-2" style="position: relative;">
+    <button type="button" id="emoji-button" class="btn btn-outline-secondary">😊</button>
+
+    <form th:action="@{/chat/message/send}" method="post" id="chatForm" class="d-flex flex-grow-1 gap-2">
+        <input type="hidden" name="roomId" th:value="${roomId}" id="roomId"/>
+        <input type="text" name="content" class="form-control"
+               style="font-size: 16px;" placeholder="메시지를 입력하세요" required id="chatInput"/>
+        <button type="submit" class="btn btn-primary" style="font-size: 0.8rem; min-width: 60px;">전송</button>
+    </form>
+</div>
+
+<div class="mt-2 d-flex align-items-center gap-2">
+    <input type="file" id="imageInput" accept="image/*" class="form-control form-control-sm"
+           style="max-width: 300px;"/>
+    <button onclick="resizeAndUploadImage()">이미지 전송</button>
+</div>
+
+<div class="mt-3">
+    <button class="btn btn-outline-secondary btn-sm" onclick="window.close()">🔚팝업창 끄기</button>
+</div>
+
+<script>
+    function confirmLeaveRoom() {
+        return confirm("채팅방에서 나가면 다시 입장할 수 없습니다.\n정말 나가시겠습니까?");
+    }
+</script>
+
+<script src="/js/emoji-button.with-categories.min.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const trigger = document.getElementById("emoji-button");
+        const input = document.getElementById("chatInput");
+
+        const picker = new EmojiButton({
+            position: 'bottom-start'
+        });
+
+        picker.on("emoji", emoji => {
+            input.value += emoji;
+            input.focus();
+        });
+
+        // 피커 열릴 때 스타일 조정
+        picker.on("picker:show", () => {
+            const interval = setInterval(() => {
+                const categoryButtons = document.querySelectorAll(".emoji-picker__category-button");
+                if (categoryButtons.length > 0) {
+                    categoryButtons.forEach(btn => {
+                        btn.style.width = "26px";
+                        btn.style.height = "26px";
+                        btn.style.margin = "1px";
+                        btn.style.padding = "0";
+                    });
+                    clearInterval(interval); // 스타일 적용 완료되면 정지
+                }
+            }, 50);
+        });
+
+        trigger.addEventListener("click", () => {
+            picker.togglePicker(trigger);
+        });
+    });
+</script>
+
+<script th:inline="javascript">
+    const myId = [[${myId}]];
+    const roomId = [[${roomId}]];
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+<!-- WebSocket 연결 -->
+<script>
+    let stompClient;
+    document.addEventListener("DOMContentLoaded", function () {
+        const chatBox = document.getElementById("chatBox");
+        const chatInput = document.getElementById("chatInput");
+        const chatForm = document.getElementById("chatForm");
+
+        const socket = new SockJS("/ws-chat");
+        stompClient = Stomp.over(socket);
+        scrollToBottomWhenImagesLoaded();
+
+
+        stompClient.connect({}, function () {
+            // ✅ 채팅 메시지 수신
+            stompClient.subscribe(`/topic/room/${roomId}`, function (messageOutput) {
+                const msg = JSON.parse(messageOutput.body);
+                console.log("📩 수신된 메시지:", msg);
+                const isMine = parseInt(msg.senderId) === parseInt(myId);
+
+                const messageDiv = document.createElement("div");
+                messageDiv.className = `chat-message ${isMine ? 'mine' : 'other'}`;
+                messageDiv.id = `msg-${msg.id}`;
+
+                const senderEl = document.createElement("div");
+                senderEl.className = "sender";
+                senderEl.textContent = msg.senderNickname;
+
+                const bubbleEl = document.createElement("div");
+                bubbleEl.className = "bubble";
+
+                if (msg.type === "IMAGE" && msg.imageUrl) {
+                    const imgEl = document.createElement("img");
+                    imgEl.src = msg.imageUrl;
+                    imgEl.alt = "첨부 이미지";
+                    imgEl.style.maxWidth = "200px";
+                    imgEl.style.borderRadius = "8px";
+
+                    // ✅ 이미지 로딩 후에 스크롤 이동
+                    imgEl.onload = function () {
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    };
+
+                    bubbleEl.appendChild(imgEl);
+                } else if (msg.content) {
+                    bubbleEl.textContent = msg.content;
+                    chatBox.scrollTop = chatBox.scrollHeight; // 텍스트는 바로 이동
+                }
+
+                const timestampEl = document.createElement("div");
+                timestampEl.className = "timestamp";
+
+                const timeSpan = document.createElement("span");
+                timeSpan.textContent = msg.createdAt;
+
+                const unreadSpan = document.createElement("span");
+                unreadSpan.className = "unread-count ms-1 text-primary small";
+                unreadSpan.textContent = msg.unreadCount > 0 ? msg.unreadCount : "";
+
+                timestampEl.appendChild(timeSpan);
+                timestampEl.appendChild(unreadSpan);
+
+                messageDiv.appendChild(senderEl);
+                messageDiv.appendChild(bubbleEl);
+                messageDiv.appendChild(timestampEl);
+
+                chatBox.appendChild(messageDiv);
+                chatBox.scrollTop = chatBox.scrollHeight;
+
+                // ✅ 렌더링 후에만 읽음 처리 (isMine이 아닐 경우)
+                if (!isMine) {
+                    setTimeout(() => {
+                        stompClient.send(`/app/chat/${roomId}`, {}, JSON.stringify({
+                            type: "READ",
+                            senderId: myId,
+                            lastReadMessageId: msg.id
+                        }));
+                    }, 100); // 이미지가 제대로 렌더링된 후
+                }
+
+                if (window.opener && typeof window.opener.reloadChatRoomList === "function") {
+                    window.opener.reloadChatRoomList();
+                }
+            });
+
+            // ✅ 읽음 수 업데이트 수신
+            stompClient.subscribe(`/topic/room/${roomId}/read`, function (messageOutput) {
+                try {
+                    const update = JSON.parse(messageOutput.body);
+                    console.log("👀 READ 수신:", update);
+
+                    if (update.type !== "READ") return;
+
+                    // 읽음 대상 메시지 DOM 탐색
+                    const msgDiv = document.getElementById(`msg-${update.id}`);
+                    if (msgDiv) {
+                        const unreadSpan = msgDiv.querySelector(".unread-count");
+                        if (unreadSpan) {
+                            unreadSpan.textContent = update.unreadCount > 0 ? update.unreadCount : "";
+                        } else {
+                            console.warn("🔍 .unread-count span이 없음");
+                        }
+                    } else {
+                        console.warn("❗ 해당 메시지 DOM 요소 없음:", update.id);
+                    }
+
+                } catch (e) {
+                    console.error("❌ READ 메시지 처리 중 오류:", e);
+                }
+            });
+
+            //  ✅ 채팅방 입장 시 → 메시지 읽음 처리 요청 전송
+            const messageEls = Array.from(document.querySelectorAll(".chat-message"));
+            let lastReadMessageId = null;
+
+            for (let i = messageEls.length - 1; i >= 0; i--) {
+                const el = messageEls[i];
+                if (!el.classList.contains("mine")) {
+                    lastReadMessageId = el.id?.replace("msg-", "");
+                    break;
+                }
+            }
+
+
+            if (lastReadMessageId) {
+                stompClient.send(`/app/chat/${roomId}`, {}, JSON.stringify({
+                    type: "READ",
+                    senderId: myId,
+                    lastReadMessageId: parseInt(lastReadMessageId, 10) // ✅ 숫자로 변환
+                }));
+
+                // ✅ 읽음 처리 후, 부모창 목록 새로고침
+                if (window.opener && typeof window.opener.reloadChatRoomList === "function") {
+                    window.opener.reloadChatRoomList();
+                }
+            }
+
+            // ✅ 메시지 전송
+            chatForm.addEventListener("submit", function (e) {
+                e.preventDefault();
+
+                const content = chatInput.value.trim();
+                if (!content) return;
+
+                stompClient.send(`/app/chat/${roomId}`, {}, JSON.stringify({
+                    type: "MESSAGE",
+                    senderId: myId,
+                    senderNickname: "MJ",
+                    content: content,
+                    createdAt: new Date().toISOString()
+                }));
+
+                if (window.opener && typeof window.opener.reloadChatRoomList === "function") {
+                    window.opener.reloadChatRoomList();
+                }
+
+                chatInput.value = "";
+                chatInput.focus();
+            });
+
+            chatInput.focus();
+            chatBox.scrollTop = chatBox.scrollHeight;
+        });
+    });
+
+    console.log("부모창에 reloadChatRoomList 호출");
+</script>
+<script>
+    function resizeAndUploadImage() {
+        const fileInput = document.getElementById("imageInput");
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert("이미지를 선택해주세요.");
+            return;
+        }
+
+        const maxDimension = 800; // 최대 가로/세로 크기
+
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+
+        img.onload = () => {
+            const canvas = document.createElement("canvas");
+            let width = img.width;
+            let height = img.height;
+
+            // 비율 유지하며 리사이즈
+            if (width > height) {
+                if (width > maxDimension) {
+                    height *= maxDimension / width;
+                    width = maxDimension;
+                }
+            } else {
+                if (height > maxDimension) {
+                    width *= maxDimension / height;
+                    height = maxDimension;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // canvas → Blob 변환
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append("file", blob, file.name); // 이름 유지
+                formData.append("roomId", roomId);
+
+                fetch("/api/chat/image", {
+                    method: "POST",
+                    body: formData
+                })
+                    .then(res => res.text())
+                    .then(imageUrl => {
+                        fileInput.value = "";
+                        console.log("✅ 리사이즈 후 업로드 완료:", imageUrl);
+                    })
+                    .catch(err => {
+                        console.error("❌ 이미지 업로드 실패", err);
+                        alert("이미지 업로드에 실패했습니다.");
+                    });
+            }, "image/jpeg", 0.9); // 품질 조정 (0.0 ~ 1.0)
+        };
+    }
+</script>
+<script>
+    function scrollToBottomWhenImagesLoaded() {
+        const chatBox = document.getElementById("chatBox");
+        const images = chatBox.querySelectorAll("img");
+        let loaded = 0;
+
+        if (images.length === 0) {
+            chatBox.scrollTop = chatBox.scrollHeight;
+            return;
+        }
+
+        images.forEach(img => {
+            if (img.complete) {
+                loaded++;
+                if (loaded === images.length) {
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            } else {
+                img.onload = () => {
+                    loaded++;
+                    if (loaded === images.length) {
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    }
+                };
+            }
+        });
+        chatBox.scrollTo({
+            top: chatBox.scrollHeight,
+            behavior: "smooth"
+        });
+    }
+</script>
+</body>
+</html>

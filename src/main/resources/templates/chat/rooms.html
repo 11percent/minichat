@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>채팅방 목록</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="container py-4">
+<header th:replace="fragments/header :: header"></header>
+
+<h2 class="mb-4" th:text="${nickName + '의 채팅방 목록'}">채팅방</h2>
+
+<div class="mt-4 d-flex gap-2">
+    <input type="text" id="opponentInput" class="form-control" placeholder="상대방 닉네임 입력"/>
+    <div id="errorMessage" class="alert alert-danger d-none mt-3"></div>
+    <button type="button" class="btn btn-success"
+            style="font-size: 0.8rem; white-space: nowrap; min-width: 100px;"
+            onclick="createAndOpenRoom()">
+        채팅방 생성
+    </button>
+</div>
+
+<div class="mt-4 d-flex gap-2" th:if="${rooms != null and !rooms.isEmpty()}">
+    <table id="roomTable" class="table table-bordered align-middle text-center">
+        <thead class="table-light">
+        <tr>
+            <th>참여자</th>
+            <th>최종 메시지 시간</th>
+            <th>최종 메시지</th>
+            <th>입장</th>
+        </tr>
+        </thead>
+
+        <tbody id="roomTableBody" th:fragment="roomTableBody">
+        <tr th:each="room : ${rooms}">
+            <td>
+                <span th:text="${room.roomName}"></span>
+                <span class="badge bg-danger ms-1" th:if="${room.unreadCount > 0}"
+                      th:text="${room.unreadCount}">0</span>
+            </td>
+            <td th:text="${room.lastMessageTime != null ? #temporals.format(room.lastMessageTime, 'yyyy-MM-dd HH:mm') : '—'}">
+                2025-07-04 15:00
+            </td>
+            <td th:text="${room.lastMessageContent != null and !room.lastMessageContent.isEmpty()
+                ? room.lastMessageContent
+                : (room.lastMessageType == 'IMAGE' ? '이미지' : '—')}">
+            </td>
+            <td>
+                <button type="button" class="btn btn-sm btn-primary"
+                        th:onclick="|window.open('/chat/room/${room.id}', 'chat_${room.id}', 'width=600,height=900,scrollbars=yes,resizable=yes')|">
+                    입장
+                </button>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div th:if="${rooms == null or rooms.isEmpty()}" class="alert alert-info">
+    현재 참여 중인 채팅방이 없습니다.
+</div>
+
+<div class="mt-3">
+    <a th:href="@{/logout}" class="btn btn-outline-secondary btn-sm">로그아웃</a>
+</div>
+
+<script>
+    function createAndOpenRoom() {
+        const nickname = document.getElementById("opponentInput").value.trim();
+        const errorDiv = document.getElementById("errorMessage");
+        errorDiv.classList.add("d-none");
+        errorDiv.textContent = "";
+
+        if (!nickname) {
+            errorDiv.textContent = "상대방 닉네임을 입력하세요.";
+            errorDiv.classList.remove("d-none");
+            return;
+        }
+
+        fetch("/chat/room/create", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({opponentNickname: nickname})
+        })
+            .then(response => response.json().then(data => {
+                if (!response.ok) {
+                    throw new Error(data.error || "채팅방 생성 실패");
+                }
+                return data;
+            }))
+            .then(data => {
+                // 새 창 열기
+                window.open(data.roomUrl, "newChatPopup", "width=700,height=800,scrollbars=yes,resizable=yes");
+                // 채팅방 목록 갱신
+                reloadChatRoomList();
+            })
+            .catch(error => {
+                errorDiv.textContent = error.message;
+                errorDiv.classList.remove("d-none");
+            });
+    }
+</script>
+<script>
+    function reloadChatRoomList() {
+        fetch("/chat/rooms", {
+            method: "GET",
+            headers: {
+                "X-Requested-With": "XMLHttpRequest"
+            }
+        })
+            .then(response => response.text())
+            .then(html => {
+                const tempTable = document.createElement("table");
+                tempTable.innerHTML = html;
+
+                const newTbody = tempTable.querySelector("tbody#roomTableBody");
+                const oldTbody = document.querySelector("tbody#roomTableBody");
+
+                console.log("📦 newTbody parsed:", newTbody);
+                console.log("📦 oldTbody existing:", oldTbody);
+
+                if (newTbody && oldTbody && oldTbody.parentNode) {
+                    oldTbody.parentNode.replaceChild(newTbody, oldTbody);
+                    console.log("✅ tbody 교체 성공");
+                } else {
+                    console.warn("❌ tbody 교체 실패", newTbody, oldTbody);
+                }
+            });
+    }
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const socket = new SockJS("/ws-chat");
+        const stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, () => {
+            // 전체 채팅방 목록 갱신을 위한 subscribe
+            stompClient.subscribe("/topic/refresh/rooms", (message) => {
+                console.log("📡 채팅 목록 새로고침 요청 수신됨");
+                reloadChatRoomList();
+            });
+        });
+    });
+</script>
+
+<footer th:replace="fragments/footer :: footer"></footer>
+
+</body>
+</html>
